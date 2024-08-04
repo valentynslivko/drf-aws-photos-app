@@ -15,3 +15,4 @@ zip -r <some_layer>.zip python/
 {"statusCode": 200, "body":"something"}
 ```
 1. Function is not in `lambda_function.py` file
+1. Tick `Lambda proxy integration Info - False` in API GW to fix malformed event input in lambda
