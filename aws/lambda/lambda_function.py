@@ -43,8 +43,7 @@ def crop_center_of_image(image: ImageFile):
 
 
 def crop_image(base64_image: str):
-    b64_decoded_img_bytes = base64_image.encode()
-    image = Image.open(BytesIO(base64.b64decode(b64_decoded_img_bytes)))
+    image = Image.open(BytesIO(base64.urlsafe_b64decode(base64_image)))
     return crop_center_of_image(image)
 
 
