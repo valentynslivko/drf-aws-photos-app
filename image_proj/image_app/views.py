@@ -6,6 +6,10 @@ from image_app.models import Profile, User
 from image_app.serializers import ProfileSerializer, UserSerializer
 from image_app.http import invoke_image_processing
 from image_app.utils import download_image
+import logging
+
+logging.basicConfig(style="{")
+logger = logging.getLogger(__name__)
 
 
 class UserViewSet(ModelViewSet):
@@ -22,31 +26,35 @@ class ProfileViewSet(ModelViewSet):
     def _process_image(self, request_data: dict):
         b64_image = download_image(request_data["image"])
         invoke_result = invoke_image_processing(b64_image)
-        if not invoke_result:
-            return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if invoke_result["status"] >= 400:
+            return Response(
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                data="Processing failed on Lambda side",
+            )
 
-        return invoke_result
+        if invoke_result["status"] == 200:
+            return invoke_result["body"]
 
-    def create(self, request):
-        data: dict = request.data
-        if data.get("image"):
-            img_src = self._process_image(request_data=data)
-            profile = Profile(**data, image=img_src)
-            profile.save()
-            return profile
-
-        return Profile.objects.create(**data)
+        return Response(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            data="Unknown error during Lambda processing",
+        )
 
     def partial_update(self, request, id: int):
         q = Profile.objects.filter(id=id).first()
         data: dict = request.data
-        if data.get("image"):
-            img_src = self._process_image(data)
-            q.image = img_src
-            q.save()
 
         for key, value in data.items():
             setattr(q, key, value)
 
+        if data.get("image"):
+            processing_response = self._process_image(data)
+            if isinstance(
+                processing_response, dict
+            ):  # if dict is returned, workflow is successful, TODO: rework with pydantic
+                q.image = processing_response["image"]
+
         q.save()
-        return Response(status=status.HTTP_200_OK)
+        q.refresh_from_db()
+        serialized_data = ProfileSerializer(q).data
+        return Response(status=status.HTTP_200_OK, data=serialized_data)
