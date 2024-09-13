@@ -1,23 +1,11 @@
+import os
 from PIL import Image, ImageFile
 from io import BytesIO
 import base64
 import boto3
 from uuid import uuid4
-
-
-def lambda_handler(event, context):
-    """
-    Expects {"image": "base64 image string"}.
-    TODO: additional input validation
-    """
-    if not event.get("image"):
-        return {"statusCode": 400, "body": "Image was not provided"}
-
-    s3_client = boto3.client("s3")
-
-    b64_image: str = event["image"]
-    image_link = save_processed_img_to_s3(crop_image(b64_image), s3_client)
-    return {"statusCode": 200, "body": {"image": image_link}}
+import json
+from urllib.parse import unquote
 
 
 def image_to_base64(image_loc: str) -> str:
@@ -43,8 +31,9 @@ def crop_center_of_image(image: ImageFile):
 
 
 def crop_image(base64_image: str):
-    image = Image.open(BytesIO(base64.urlsafe_b64decode(base64_image)))
-    return crop_center_of_image(image)
+    b64_decoded_img_bytes = base64_image.encode()
+    with Image.open(BytesIO(base64.b64decode(b64_decoded_img_bytes))) as image:
+        return crop_center_of_image(image)
 
 
 def save_processed_img_to_s3(image: Image, s3_client):
@@ -52,7 +41,7 @@ def save_processed_img_to_s3(image: Image, s3_client):
     image.save(buffer, format="PNG")
     buffer.seek(0)
 
-    BUCKET_NAME = "chi-test-task-bucket"  # set in envs
+    BUCKET_NAME = os.environ["BucketName"]  # set in envs
     object_key = f"{uuid4()}.png"
 
     s3_client.put_object(
@@ -60,3 +49,37 @@ def save_processed_img_to_s3(image: Image, s3_client):
     )
     file_link = f"https://{BUCKET_NAME}.s3.amazonaws.com/{object_key}"
     return file_link
+
+
+def lambda_handler(event, context):
+    """
+    Expects {"image": "base64 image string"}.
+    TODO: additional input validation
+    Requires 'Lambda proxy integration' set to 'False'
+    """
+    payload = event["body"]
+    if not payload:
+        return {
+            "isBase64Encoded": False,
+            "statusCode": 400,
+            "headers": None,
+            "body": "Image was not provided",
+        }
+        # return {"statusCode": 400, "body": "Image was not provided"}
+
+    s3_client = boto3.client("s3")
+
+    b64_image: str = unquote(
+        payload.replace("image=", "")
+    )  # TODO: validation if image is empty
+    image_link = save_processed_img_to_s3(
+        crop_image(b64_image), s3_client
+    )  # TODO: exception handling
+    return {
+        "isBase64Encoded": False,
+        "statusCode": 200,
+        "headers": None,
+        "body": json.dumps({"image": image_link}),
+    }
+
+    # return {"statusCode": 200, "body": {"image": image_link}}
