@@ -1,29 +1,35 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Resources:
-  MyLambdaFunction:
-    Type: 'AWS::Lambda::Function'
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
     Properties:
-      FunctionName: MyLambdaFunction
-      Handler: lambda_function.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.10
-      Code:
-        S3Bucket: chi-test-task-bucket
-        S3Key: lambda_function.zip
-      Layers:
-        - !Ref MyLambdaLayer
+      BucketName: "chi-lambda-test-task-bucket" 
+      VersioningConfiguration:
+        Status: "Suspended"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: "Environment"
+          Value: "Dev"
 
-  MyLambdaLayer:
-    Type: 'AWS::Lambda::LayerVersion'
+  ChiS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
     Properties:
-      LayerName: MyLambdaLayer
-      CompatibleRuntimes:
-        - python3.10
-      Content:
-        S3Bucket: chi-test-task-bucket
-        S3Key: test-task-chi-layer.zip
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 
+              - 's3:GetObject'
 
-  LambdaExecutionRole:
+            Resource: !Sub arn:aws:s3:::${S3Bucket}/*
+
+  ChiLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument:
@@ -41,53 +47,107 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'logs:*'
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
                 Resource: '*'
 
-  # MyS3Bucket:
-  #   Type: 'AWS::S3::Bucket'
-  #   Properties:
-  #     BucketName: chi-test-task-bucket
+  ChiAPIGWLogRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "ApiGatewayCloudWatchLogsRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "apigateway.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "ApiGatewayCloudWatchLogsPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
 
-  # MyS3BucketPolicy:
-  #   Type: 'AWS::S3::BucketPolicy'
-  #   Properties:
-  #     Bucket: !Ref MyS3Bucket
-  #     PolicyDocument:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #         - Effect: Allow
-  #           Principal: '*'
-  #           Action: 's3:GetObject'
-  #           Resource: !Sub arn:aws:s3:::${MyS3Bucket}/*
-
-  ApiGatewayRestApi:
+  ChiApiGatewayRestApi:
     Type: 'AWS::ApiGateway::RestApi'
     Properties:
-      Name: MyApi
+      Name: ChiImageAPI
 
-  ApiGatewayResource:
+  ChiApiGatewayResource:
     Type: 'AWS::ApiGateway::Resource'
     Properties:
-      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
-      PathPart: myresource
-      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ChiApiGatewayRestApi.RootResourceId
+      PathPart: image
+      RestApiId: !Ref ChiApiGatewayRestApi
 
-  ApiGatewayMethod:
+  ChiLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "awslogs-chi-test-app"
+      RetentionInDays: 14
+
+  ChiLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: ChiLambdaFunction
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt ChiLambdaExecutionRole.Arn
+      Runtime: python3.10
+      Timeout: 15
+      LoggingConfig:
+        LogGroup: !Ref ChiLambdaLogGroup
+
+      Environment:
+        Variables:
+          BucketName: !Ref S3Bucket
+
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: lambda_function.zip
+
+      Layers:
+        - !Ref ChiLambdaLayer
+
+  ChiLambdaLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    Properties:
+      LayerName: ChiLambdaLayer
+      CompatibleRuntimes:
+        - python3.10
+      Content:
+        S3Bucket: !Ref S3Bucket
+        S3Key: test-task-chi-layer.zip
+
+  ChiApiGatewayMethod:
     Type: 'AWS::ApiGateway::Method'
     Properties:
       AuthorizationType: NONE
       HttpMethod: POST
-      ResourceId: !Ref ApiGatewayResource
-      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ChiApiGatewayResource
+      RestApiId: !Ref ChiApiGatewayRestApi
       Integration:
         IntegrationHttpMethod: POST
         Type: AWS_PROXY
         Uri: 
-          Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations
+          Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChiLambdaFunction.Arn}/invocations
 
-  LambdaInvokePermission:
+  ChiApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: arn:aws:iam::509399631761:role/ApiGatewayCloudWatchLogsRole
+      
+  ChiLambdaInvokePermission:
     Type: 'AWS::Lambda::Permission'
     Properties:
       Action: 'lambda:InvokeFunction'
-      FunctionName: !Ref MyLambdaFunction
+      FunctionName: !Ref ChiLambdaFunction
       Principal: 'apigateway.amazonaws.com'
